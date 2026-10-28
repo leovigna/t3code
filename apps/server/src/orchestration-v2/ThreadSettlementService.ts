@@ -389,6 +389,7 @@ export const make = Effect.gen(function* () {
           thread.linkedPullRequest != null ||
           thread.branchPullRequest != null,
       );
+    if (!settings.backgroundPullRequestRefreshEnabled) return;
     const lookupCwdByThreadId = new Map<string, string>();
     yield* Effect.forEach(
       lookupCandidates,

@@ -935,7 +935,9 @@ const make = Effect.gen(function* () {
           : old
             ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} days`
             : `settled for ${settledDays} days`;
-        if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
+        const onMerge =
+          settings.worktreeOnMerge && serverSettings.backgroundPullRequestRefreshEnabled;
+        if (!eligible && (settings.worktreeUnchanged || onMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
           const remotes = yield* git.execute({
             operation: "StorageCleanup.listRemotes",
@@ -1015,7 +1017,7 @@ const make = Effect.gen(function* () {
               remote === null
                 ? "no commits beyond the project branch"
                 : "no commits beyond the default branch";
-          if (!eligible && remote !== null && settings.worktreeOnMerge && thread.branch !== null) {
+          if (!eligible && remote !== null && onMerge && thread.branch !== null) {
             const pullRequest = yield* gitManager.branchPullRequest(
               { cwd: worktreePath, branch: thread.branch },
               { refresh: true },
