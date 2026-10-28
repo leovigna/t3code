@@ -105,6 +105,8 @@ export interface LatestProposedPlanState {
   readonly runId: RunId | null;
   readonly planMarkdown: string;
   readonly status: OrchestrationV2PlanArtifact["status"];
+  readonly detailOmitted?: true;
+  readonly revision?: string;
 }
 
 export type TimelineAttempt = Pick<
@@ -270,6 +272,8 @@ function toLatestProposedPlanState(
     runId: plan.runId,
     planMarkdown: plan.markdown,
     status: plan.status,
+    ...(plan.detailOmitted ? { detailOmitted: true as const } : {}),
+    ...(plan.revision ? { revision: plan.revision } : {}),
   };
 }
 
@@ -684,6 +688,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         status: plan?.kind === "proposed_plan" ? plan.status : ("active" as const),
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
+        sourceThreadId: row.sourceThreadId,
+        ...(item.detailOmitted ? { detailOmitted: true as const } : {}),
+        streaming: item.streaming,
       };
       entries.push({
         id: item.id,

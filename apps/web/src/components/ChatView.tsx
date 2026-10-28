@@ -41,6 +41,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
+import { usePlanDetail } from "../state/queries";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -1364,12 +1365,25 @@ export default function ChatView(props: ChatViewProps) {
   const onHeldRequestIdsChange = useStableCallback((requestIds: ReadonlySet<string>) => {
     setHeldApprovalRequestIds((current) => (shallow(current, requestIds) ? current : requestIds));
   });
-  const activeProposedPlan = (() => {
-    if (!latestRunSettled) {
-      return null;
-    }
-    return findLatestProposedPlan(serverProjection, activeLatestRun?.runId ?? null);
-  })();
+  const proposedPlanSummary = latestRunSettled
+    ? findLatestProposedPlan(serverProjection, activeLatestRun?.runId ?? null)
+    : null;
+  const proposedPlanDetail = usePlanDetail(
+    proposedPlanSummary?.detailOmitted && activeThreadId !== null
+      ? {
+          environmentId,
+          threadId: activeThreadId,
+          planId: proposedPlanSummary.id,
+          revision: proposedPlanSummary.revision ?? proposedPlanSummary.id,
+        }
+      : null,
+  );
+  const loadedPlan = proposedPlanDetail.data?.plan;
+  // The summary keeps the follow-up actions available while the complete plan loads or fails to.
+  const activeProposedPlan =
+    proposedPlanSummary !== null && loadedPlan?.kind === "proposed_plan"
+      ? { ...proposedPlanSummary, planMarkdown: loadedPlan.markdown }
+      : proposedPlanSummary;
   const showPlanFollowUpPrompt = shouldShowPlanFollowUpPrompt({
     pendingUserInputCount: pendingUserInputs.length,
     interactionMode,
