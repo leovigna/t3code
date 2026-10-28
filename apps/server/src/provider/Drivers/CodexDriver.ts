@@ -51,6 +51,7 @@ import {
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
+import { makeCodexAutoProvider, reserveCodexAutoPoolMember } from "./CodexAutoProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
@@ -134,6 +135,15 @@ export const CodexDriver: ProviderDriver<
     enabled,
     config,
   }) {
+    if (config.autoPoolMemberIds)
+      return yield* makeCodexAutoProvider({
+        instanceId,
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+      });
     if (config.setupMode === "managed")
       return yield* makeManagedCodexProvider({
         instanceId,
@@ -378,7 +388,7 @@ export const CodexDriver: ProviderDriver<
       snapshot,
       snapshotForCwd,
       consumeResetCredit,
-      orchestrationAdapter,
+      orchestrationAdapter: yield* reserveCodexAutoPoolMember(orchestrationAdapter, instanceId),
       textGeneration,
     } satisfies ProviderInstance;
   }),

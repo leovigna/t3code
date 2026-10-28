@@ -56,6 +56,7 @@ import { ProviderWizardAuthenticationStep } from "./ProviderWizardAuthentication
 import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
 import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { MultipleAccountsNote } from "./MultipleAccountsNote";
+import { CodexAutoPoolSection } from "./CodexAutoPoolSection";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 
@@ -81,7 +82,11 @@ const DEFAULT_DRIVER_OPTION = providerClients.definitions[0]!;
 const DRIVER_OPTIONS = providerClients.definitions.filter(
   (option) => option.driverKind !== ACP_REGISTRY_DRIVER_KIND,
 );
-const FEATURED_DRIVER_OPTIONS = DRIVER_OPTIONS.filter((option) => option.featured !== false);
+const CODEX_AUTO_OPTION_VALUE = "codex-auto";
+const FEATURED_DRIVER_OPTIONS = [
+  ...DRIVER_OPTIONS.filter((option) => option.featured !== false),
+  { ...DEFAULT_DRIVER_OPTION, label: "Codex Auto", optionValue: CODEX_AUTO_OPTION_VALUE },
+];
 const MORE_DRIVER_OPTIONS = DRIVER_OPTIONS.filter((option) => option.featured === false);
 const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
 function validateInstanceId(id: string, existing: ReadonlySet<string>): string | null {
@@ -101,8 +106,8 @@ function ProviderOptionGrid({
   onValueChange,
   ...labelProps
 }: {
-  readonly options: ReadonlyArray<ProviderClientDefinition>;
-  readonly value: ProviderDriverKind;
+  readonly options: ReadonlyArray<ProviderClientDefinition & { readonly optionValue?: string }>;
+  readonly value: string;
   readonly disabled: boolean;
   readonly onValueChange: (value: string) => void;
   readonly "aria-label"?: string;
@@ -118,8 +123,8 @@ function ProviderOptionGrid({
     >
       {options.map((option) => (
         <RadioPrimitive.Root
-          key={option.driverKind}
-          value={option.driverKind}
+          key={option.optionValue ?? option.driverKind}
+          value={option.optionValue ?? option.driverKind}
           className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-inset data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
         >
           <ProviderInstanceIcon
@@ -178,6 +183,7 @@ export function AddProviderInstanceDialog({
     isManagedDriverAllowed(managedPolicy, option.driverKind),
   );
   const acpRegistryAllowed = isManagedDriverAllowed(managedPolicy, ACP_REGISTRY_DRIVER_KIND);
+  const [isCodexAuto, setIsCodexAuto] = useState(false);
   const [driver, setDriver] = useState<ProviderDriverKind>(
     () =>
       (featuredDriverOptions[0] ?? moreDriverOptions[0])?.driverKind ??
@@ -205,7 +211,11 @@ export function AddProviderInstanceDialog({
     ...Object.keys(settings.providerInstances ?? {}),
   ]);
 
-  const driverOption = providerClients.get(driver) ?? DEFAULT_DRIVER_OPTION;
+  const driverDefinition = providerClients.get(driver) ?? DEFAULT_DRIVER_OPTION;
+  const driverOption = isCodexAuto
+    ? { ...driverDefinition, label: "Codex Auto" }
+    : driverDefinition;
+  const draftKey = isCodexAuto ? CODEX_AUTO_OPTION_VALUE : driver;
   const isAcpRegistry = driver === ACP_REGISTRY_DRIVER_KIND;
   const showRegistrySearch =
     !createdInstanceId &&
@@ -220,13 +230,13 @@ export function AddProviderInstanceDialog({
     accentColor: "",
     instanceIdOverride: null,
   };
-  const { label, accentColor, instanceIdOverride } = identityByDriver[driver] ?? defaultIdentity;
+  const { label, accentColor, instanceIdOverride } = identityByDriver[draftKey] ?? defaultIdentity;
   const instanceId =
     instanceIdOverride ??
     deriveAvailableInstanceId(
       (candidateLabel) => {
         if (!candidateLabel.trim() || candidateLabel === driverOption.label) {
-          return isAcpRegistry ? `${driver}_custom` : driver;
+          return isCodexAuto ? "codex_auto" : isAcpRegistry ? `${driver}_custom` : driver;
         }
         return deriveInstanceId(driver, candidateLabel);
       },
@@ -239,7 +249,8 @@ export function AddProviderInstanceDialog({
   const identityStep = 1;
   const previewLabel = label.trim() || `${driverOption.label} Workspace`;
 
-  const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
+  const configDraft =
+    configByDriver[draftKey] ?? (isCodexAuto ? { autoPoolMemberIds: [] } : EMPTY_CONFIG_DRAFT);
   const isLocalAcp = isAcpRegistry && isManualAcpConfiguration && configDraft.source === "local";
   const localCommandPath =
     typeof configDraft.commandPath === "string" ? configDraft.commandPath.trim() : "";
@@ -262,22 +273,24 @@ export function AddProviderInstanceDialog({
     setConfigByDriver((existing) => {
       const next = { ...existing };
       if (config === undefined || Object.keys(config).length === 0) {
-        delete next[driver];
+        delete next[draftKey];
       } else {
-        next[driver] = config;
+        next[draftKey] = config;
       }
       return next;
     });
   };
   const selectDriver = (value: string) => {
-    setDriver(ProviderDriverKind.make(value));
+    const codexAuto = value === CODEX_AUTO_OPTION_VALUE;
+    setIsCodexAuto(codexAuto);
+    setDriver(codexAuto ? DEFAULT_DRIVER_KIND : ProviderDriverKind.make(value));
     setIsManualAcpConfiguration(false);
     setHasAttemptedSubmit(false);
   };
   const setIdentityDraft = (update: Partial<ProviderIdentityDraft>) => {
     setIdentityByDriver((existing) => ({
       ...existing,
-      [driver]: { ...(existing[driver] ?? defaultIdentity), ...update },
+      [draftKey]: { ...(existing[draftKey] ?? defaultIdentity), ...update },
     }));
   };
 
@@ -312,6 +325,7 @@ export function AddProviderInstanceDialog({
   };
 
   const handleAcpPrepared = (agent: AcpRegistrySearchAgent) => {
+    setIsCodexAuto(false);
     setDriver(ACP_REGISTRY_DRIVER_KIND);
     const nextLabel = agent.name;
     const registryIconUrl = resolveOfficialAcpRegistryIconUrl(agent.icon);
@@ -341,6 +355,7 @@ export function AddProviderInstanceDialog({
   };
 
   const handleManualAcpConfiguration = () => {
+    setIsCodexAuto(false);
     setDriver(ACP_REGISTRY_DRIVER_KIND);
     setSelectedAcp(null);
     setIsManualAcpConfiguration(true);
@@ -359,6 +374,7 @@ export function AddProviderInstanceDialog({
   };
 
   const handleLocalAcpConfiguration = () => {
+    setIsCodexAuto(false);
     setDriver(ACP_REGISTRY_DRIVER_KIND);
     setSelectedAcp(null);
     setIsManualAcpConfiguration(true);
@@ -387,8 +403,8 @@ export function AddProviderInstanceDialog({
 
     const config =
       driver === "codex"
-        ? { ...configByDriver[driver], setupMode: "existing" }
-        : (configByDriver[driver] ?? {});
+        ? { ...configDraft, setupMode: "existing" }
+        : (configByDriver[draftKey] ?? {});
     const hasConfig = Object.keys(config).length > 0;
     const normalizedAccentColor = normalizeProviderAccentColor(accentColor);
 
@@ -486,7 +502,7 @@ export function AddProviderInstanceDialog({
                 </div>
                 <ProviderOptionGrid
                   options={featuredDriverOptions}
-                  value={driver}
+                  value={isCodexAuto ? CODEX_AUTO_OPTION_VALUE : driver}
                   disabled={isPreparingRegistryAgent}
                   onValueChange={selectDriver}
                   aria-labelledby="add-instance-driver-label"
@@ -698,17 +714,25 @@ export function AddProviderInstanceDialog({
 
               {!isAcpRegistry && driverSettingsFields.length > 0 ? (
                 <SettingsGroup variant="plain" className={cn(wizardStep !== 2 && "hidden")}>
-                  <ProviderSettingsForm
-                    definition={driverOption}
-                    value={configDraft}
-                    idPrefix={`add-provider-${driver}`}
-                    variant="settings"
-                    onChange={setConfigDraft}
-                    managed={
-                      driverLocks && { keys: driverLocks.configKeys, reason: driverLocks.reason }
-                    }
-                    environmentId={environmentId}
-                  />
+                  {isCodexAuto ? (
+                    <CodexAutoPoolSection
+                      environmentId={environmentId}
+                      value={configDraft}
+                      onChange={setConfigDraft}
+                    />
+                  ) : (
+                    <ProviderSettingsForm
+                      definition={driverOption}
+                      value={configDraft}
+                      idPrefix={`add-provider-${driver}`}
+                      variant="settings"
+                      onChange={setConfigDraft}
+                      managed={
+                        driverLocks && { keys: driverLocks.configKeys, reason: driverLocks.reason }
+                      }
+                      environmentId={environmentId}
+                    />
+                  )}
                 </SettingsGroup>
               ) : !isAcpRegistry && wizardStep === 2 ? (
                 <div className="grid gap-2">
@@ -734,7 +758,7 @@ export function AddProviderInstanceDialog({
               >
                 {wizardStep === 0 ? "Cancel" : "Back"}
               </Button>
-              {wizardStep === 0 && driver === "codex" ? (
+              {wizardStep === 0 && driver === "codex" && !isCodexAuto ? (
                 <>
                   <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
                     Configure manually
