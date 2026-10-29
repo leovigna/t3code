@@ -34,6 +34,7 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
+  LiveVoiceName,
 } from "@t3tools/contracts";
 import {
   EnvironmentRequestInvalidError,
@@ -45,6 +46,8 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { LiveVoiceControls, type LiveVoiceControlsProps } from "./LiveVoiceControls";
+import { liveVoiceCalls } from "../../state/liveVoice";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
@@ -365,6 +368,7 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   activeThreadShell: ThreadShell | null;
   promptHistoryEntries: ReadonlyArray<TimelineEntry>;
+  isServerThread: boolean;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
 
@@ -425,6 +429,9 @@ export interface ChatComposerProps {
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
+  liveVoice: LiveVoiceName;
+  /** Creates a draft's thread the way its first message would, before a call starts. */
+  onEnsureLiveVoiceThread: () => Promise<void>;
 
   contextWindowEntries: Parameters<typeof deriveLatestContextWindowSnapshot>[0];
   contextWindowLiveUsage: Parameters<typeof deriveLatestContextWindowSnapshot>[1];
@@ -520,6 +527,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThread,
     promptHistoryEntries,
+    isServerThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
@@ -552,6 +560,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadModelSelection,
     reportedModelSelection,
     activeProjectId,
+    liveVoice,
+    onEnsureLiveVoiceThread,
     contextWindowEntries,
     contextWindowLiveUsage,
     contextWindowProviderThread,
@@ -2103,6 +2113,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       event,
       onSend: (sendEvent) => {
         providerInputRejectedRef.current = false;
+        const liveVoiceTarget =
+          activeThread !== undefined && !activePendingProgress
+            ? { environmentId, threadId: activeThread.id }
+            : null;
+        // Synchronous, so no second send can slip in before the call is held.
+        if (liveVoiceTarget !== null) liveVoiceCalls.pauseForText(liveVoiceTarget);
         onSend(
           sendEvent,
           dispatchMode ??
@@ -2114,6 +2130,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }),
           submissionIntent,
         );
+        if (providerInputRejectedRef.current && liveVoiceTarget !== null)
+          liveVoiceCalls.cancelTextPause(liveVoiceTarget);
         return !providerInputRejectedRef.current;
       },
     });
@@ -3128,6 +3146,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onRemoveFile={removeComposerFileFromDraft}
       />
     ) : null;
+  const liveVoiceUnavailableReason =
+    activeThread === undefined
+      ? "Choose a project before starting a call"
+      : selectedProvider !== ProviderDriverKind.make("codex")
+        ? "Calls need Codex"
+        : !canOperateThread
+          ? "You can't start calls in this environment"
+          : null;
+  const liveVoiceProps = {
+    environmentId,
+    threadId: activeThread?.id ?? null,
+    voice: liveVoice,
+    handoffConfig: { modelSelection: selectedModelSelection, runtimeMode, interactionMode },
+    handoffLabel: `${selectedModelSelection.model} · ${runtimeModeConfig[runtimeMode].label}`,
+    turnRunning: phase === "running",
+    unavailableReason: liveVoiceUnavailableReason,
+    onEnsureThread: isServerThread ? undefined : onEnsureLiveVoiceThread,
+  } satisfies LiveVoiceControlsProps;
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton
       addComposerAttachments={addComposerAttachments}
@@ -3262,6 +3298,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     (showProviderUnavailable ? "Enable a provider in Settings" : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
+                <LiveVoiceControls {...liveVoiceProps} compact />
                 <button
                   type="button"
                   data-chat-composer-transition-actions="true"
@@ -3489,6 +3526,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
                 >
+                  <LiveVoiceControls {...liveVoiceProps} />
                   <div
                     ref={attachExpandedComposerControls}
                     data-chat-composer-controls="footer"
